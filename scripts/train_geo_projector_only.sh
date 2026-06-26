@@ -22,7 +22,7 @@ OUTPUT_DIR="./JanusVLN_GHOST_projector_only"
 CACHE_DIR="./cache"
 mkdir -p $OUTPUT_DIR
 
-DATASETS="train_r2r_rxr train_r2r"
+DATASETS="train_r2r"
 
 # GHOST lives in a sibling repo with absolute streamvggt.* imports.
 export GHOST_SRC="${GHOST_SRC:-../GHOST/src}"
