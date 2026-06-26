@@ -63,7 +63,7 @@ torchrun --nproc_per_node=$NPROC_PER_NODE \
             --logging_steps 10 \
             --save_steps 1000 \
             --save_total_limit 1 \
-            --deepspeed "scripts/zero3.json" \
+            --deepspeed "scripts/zero2.json" \
             --gradient_checkpointing \
             --dataloader_num_workers 8 \
             --group_by_modality_length true \
