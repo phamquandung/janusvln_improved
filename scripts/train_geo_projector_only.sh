@@ -13,10 +13,10 @@ MASTER_PORT=$(shuf -i 20000-29999 -n 1)
 NPROC_PER_NODE=$(nvidia-smi --list-gpus | wc -l)
 
 # Released JanusVLN checkpoint to fine-tune from (do NOT point at the Qwen base).
-MODEL_PATH="${JANUSVLN_CKPT:-./model/JanusVLN-3B}"
+MODEL_PATH="${JANUSVLN_CKPT:-/mnt/data/vmo-ai-task/dungpq6/model-checkpoint/JanusVLN_Base}"
 # GHOST StreamVGGT weights (server: $model-checkpoint/StreamVGGT/model.pth). If empty,
 # the encoder inherits the VGGT-backbone weights already in the checkpoint.
-STREAMVGGT_MODEL_PATH="${STREAMVGGT_CKPT:-}"
+STREAMVGGT_MODEL_PATH="${STREAMVGGT_CKPT:-/mnt/data/vmo-ai-task/dungpq6/model-checkpoint/StreamVGGT}"
 
 OUTPUT_DIR="./JanusVLN_GHOST_projector_only"
 CACHE_DIR="./cache"
