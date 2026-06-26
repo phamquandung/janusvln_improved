@@ -25,7 +25,7 @@ mkdir -p $OUTPUT_DIR
 DATASETS="train_r2r"
 
 # GHOST lives in a sibling repo with absolute streamvggt.* imports.
-export GHOST_SRC="${GHOST_SRC:-../GHOST/src}"
+export GHOST_SRC="${GHOST_SRC:-/home/dungpq6/Project/GHOST/src}"
 export NCCL_NVLS_ENABLE=0
 
 torchrun --nproc_per_node=$NPROC_PER_NODE \
