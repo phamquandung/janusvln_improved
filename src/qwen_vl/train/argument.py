@@ -14,6 +14,9 @@ class ModelArguments:
     geometry_encoder: str = field(default="vggt")
     # Flat state_dict for GHOST StreamVGGT weights (e.g. lch01/StreamVGGT ckpt/model.pth).
     streamvggt_model_path: Optional[str] = field(default=None)
+    # Lever 2 (geometry memory): "full" (no eviction) or "importance" (Tier A, bounded budget).
+    geometry_memory_policy: str = field(default="full")
+    geometry_kv_budget: int = field(default=200000)
     lam: float = field(default=0.2)
     distill_loss_weight: float = field(default=1.0)
     reference_frame: str = field(default="last")

@@ -115,6 +115,8 @@ def train(attn_implementation="flash_attention_2"):
         config = AutoConfig.from_pretrained(model_args.model_name_or_path)
         setattr(config, "lam", model_args.lam)
         setattr(config, "geometry_encoder", model_args.geometry_encoder)
+        setattr(config, "geometry_memory_policy", model_args.geometry_memory_policy)
+        setattr(config, "geometry_kv_budget", model_args.geometry_kv_budget)
         model = Qwen2_5_VLForConditionalGenerationForJanusVLN.from_pretrained(
             pretrained_model_name_or_path=model_args.model_name_or_path,
             config=config,

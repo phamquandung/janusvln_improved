@@ -1703,6 +1703,19 @@ class Qwen2_5_VLForConditionalGenerationForJanusVLN(Qwen2_5_VLPreTrainedModel, G
         self.vggt = vggt
         self.past_key_values_vggt = None
         self.last_vggt_ms = 0.0
+        # Lever 2 (geometry memory). "full" = keep all geometry KV (no eviction).
+        # "importance" = Tier A: GHOST importance-based eviction with a bounded budget,
+        # active in BOTH training and eval (replaces the eval-only sink+window). With the
+        # depth/pose heads dropped, importance reduces to head-free signals (visual saliency
+        # + temporal recency); the default weights below zero out the unavailable terms.
+        self.geometry_memory_policy = getattr(config, "geometry_memory_policy", "full")
+        self.geometry_kv_budget = getattr(config, "geometry_kv_budget", 200000)
+        self.geometry_importance_weights = getattr(config, "geometry_importance_weights", {
+            "w_camera": 0.0, "w_geometry": 0.0, "w_depth_conf": 0.0, "w_pts_conf": 0.0,
+            "w_temporal": 0.5, "w_saliency": 0.5, "w_frame": 0.5, "w_token": 0.5,
+        })
+        self.importance_cache_vggt = {}
+        self.frame_metadata_vggt = []
         for param in self.vggt.parameters():
             param.requires_grad = False
 
@@ -2063,27 +2076,46 @@ class Qwen2_5_VLForConditionalGenerationForJanusVLN(Qwen2_5_VLPreTrainedModel, G
                                 if not self.config.reference_frame=="first":
                                     images_vggt[i] = torch.flip(images_vggt[i], dims=(0,))
                                 
-                                if self.mode == "evaluation": 
+                                if self.mode == "evaluation":
                                     if self.past_key_values_vggt is None:
                                         self.past_key_values_vggt = [None] * self.vggt.aggregator.depth
+                                        self.importance_cache_vggt = {}
+                                        self.frame_metadata_vggt = []
                                 else:
                                     self.past_key_values_vggt = [None] * self.vggt.aggregator.depth
+                                    self.importance_cache_vggt = {}
+                                    self.frame_metadata_vggt = []
 
                                 for k, frame in enumerate(images_vggt[i]):
                                     images = frame.unsqueeze(0).unsqueeze(0)
                                     if self.geometry_encoder_type in ("ghost", "streamvggt"):
-                                        # Run GHOST causally with internal eviction effectively
-                                        # disabled: a huge budget makes eviction keep all tokens,
-                                        # and a non-"importance" mode skips importance scoring.
-                                        # Memory logic (sink+window via kv_cache_vggt) is unchanged.
-                                        aggregator_output = self.vggt.aggregator(
-                                            images,
-                                            past_key_values=self.past_key_values_vggt,
-                                            use_cache=True,
-                                            past_frame_idx=k,
-                                            total_budget=10**9,
-                                            eviction_mode="recent",
-                                        )
+                                        if self.geometry_memory_policy == "importance":
+                                            # Lever 2 Tier A: GHOST importance-based eviction with a
+                                            # bounded budget. frame_metadata holds one entry per frame
+                                            # (head-free => empty dicts => saliency + temporal recency).
+                                            self.frame_metadata_vggt.append({})
+                                            aggregator_output = self.vggt.aggregator(
+                                                images,
+                                                past_key_values=self.past_key_values_vggt,
+                                                use_cache=True,
+                                                past_frame_idx=k,
+                                                total_budget=self.geometry_kv_budget,
+                                                eviction_mode="importance",
+                                                importance_cache=self.importance_cache_vggt,
+                                                importance_weights=self.geometry_importance_weights,
+                                                frame_metadata=self.frame_metadata_vggt,
+                                            )
+                                        else:
+                                            # "full": huge budget makes eviction a no-op (keep all
+                                            # tokens); non-"importance" mode skips importance scoring.
+                                            aggregator_output = self.vggt.aggregator(
+                                                images,
+                                                past_key_values=self.past_key_values_vggt,
+                                                use_cache=True,
+                                                past_frame_idx=k,
+                                                total_budget=10**9,
+                                                eviction_mode="recent",
+                                            )
                                     else:
                                         aggregator_output = self.vggt.aggregator(
                                             images,
@@ -2098,7 +2130,12 @@ class Qwen2_5_VLForConditionalGenerationForJanusVLN(Qwen2_5_VLPreTrainedModel, G
                                         aggregated_tokens, patch_start_idx = aggregator_output
 
                                     self.past_key_values_vggt = past_key_values_vggt
-                                    if self.mode == "evaluation" and self.past_key_values_vggt is not None:
+                                    if (self.mode == "evaluation"
+                                            and self.past_key_values_vggt is not None
+                                            and self.geometry_memory_policy != "importance"):
+                                        # Importance eviction already bounds the cache in both
+                                        # train and eval; skip the eval-only sink+window to avoid
+                                        # double-evicting.
                                         self.past_key_values_vggt = self.kv_cache_vggt(self.past_key_values_vggt)
 
                                     features = aggregated_tokens[-2][0,:, patch_start_idx:]
