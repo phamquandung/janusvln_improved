@@ -2,9 +2,9 @@
 #SBATCH --job-name=janusvln-ghost-full
 #SBATCH --output=logs/ghost_full_%j.log
 #SBATCH --error=logs/ghost_full_%j.err
-#SBATCH --nodelist=worker-2
-#SBATCH --gpus=4
-#SBATCH --cpus-per-task=60
+#SBATCH --nodelist=worker-1
+#SBATCH --gpus=8
+#SBATCH --cpus-per-task=120
 #SBATCH --mem-per-cpu=8192
 #
 # !!! VERIFY: container must have the `janusvln` conda env WITH janusvln_improved's deps.
