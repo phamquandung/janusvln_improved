@@ -44,8 +44,10 @@ DEEPSPEED_CFG="${DEEPSPEED_CFG:-scripts/zero2.json}"
 # Lever 2 Tier A: GHOST importance-based geometry-memory eviction (head-free: saliency +
 # temporal recency), bounded budget, active in train AND eval. Set GEOM_MEM_POLICY=full for
 # the no-eviction +Geo baseline. Budget is per-run tunable (sweep it — that's the Tier A study).
-GEOM_MEM_POLICY="${GEOM_MEM_POLICY:-importance}"
-GEOM_KV_BUDGET="${GEOM_KV_BUDGET:-200000}"
+GEOM_MEM_POLICY="${GEOM_MEM_POLICY:-full}"
+GEOM_KV_BUDGET="${GEOM_KV_BUDGET:-1200000}"
+# Lever 3 (fusion): "flat_add" (JanusVLN S+lam*G) or "gated" (VSFI-style zero-init gate).
+FUSION_METHOD="${FUSION_METHOD:-gated}"
 mkdir -p "${OUTPUT_DIR}" "${CACHE_DIR}"
 
 # --- W&B (offline) -------------------------------------------------------------------------
@@ -62,7 +64,7 @@ echo "PROJECT_ROOT=${PROJECT_ROOT}  NPROC_PER_NODE=${NPROC_PER_NODE}  MASTER_POR
 echo "MODEL_PATH=${MODEL_PATH}  (Qwen2.5-VL base — full training, not fine-tune)"
 echo "STREAMVGGT_MODEL_PATH=${STREAMVGGT_MODEL_PATH}  GHOST_SRC=${GHOST_SRC}"
 echo "OUTPUT_DIR=${OUTPUT_DIR}  DATASETS=${DATASETS}  DEEPSPEED_CFG=${DEEPSPEED_CFG}  REPORT_TO=${REPORT_TO}"
-echo "GEOM_MEM_POLICY=${GEOM_MEM_POLICY}  GEOM_KV_BUDGET=${GEOM_KV_BUDGET}"
+echo "GEOM_MEM_POLICY=${GEOM_MEM_POLICY}  GEOM_KV_BUDGET=${GEOM_KV_BUDGET}  FUSION_METHOD=${FUSION_METHOD}"
 
 torchrun --nproc_per_node="${NPROC_PER_NODE}" \
     --master_addr="${MASTER_ADDR}" \
@@ -73,6 +75,7 @@ torchrun --nproc_per_node="${NPROC_PER_NODE}" \
     --streamvggt_model_path "${STREAMVGGT_MODEL_PATH}" \
     --geometry_memory_policy "${GEOM_MEM_POLICY}" \
     --geometry_kv_budget "${GEOM_KV_BUDGET}" \
+    --fusion_method "${FUSION_METHOD}" \
     --tune_mm_llm True \
     --tune_mm_mlp True \
     --tune_mm_vision False \

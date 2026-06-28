@@ -174,6 +174,29 @@ class Qwen2RMSNorm(nn.Module):
         return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
 
 
+class GatedGeometryFusion(nn.Module):
+    """Lever 3 (fusion): VSFI-style gated injection of geometry into the visual stream,
+    made baseline-preserving.
+
+        F = S + tanh(alpha) * sigmoid(gate([S; G])) * G
+
+    `alpha` is a learnable scalar init 0, so at init tanh(alpha)=0 => F = S exactly
+    (geometry off; the model learns to inject it). The per-channel sigmoid gate is
+    input-dependent (the VSFI idea: trust geometry where useful, suppress it where not).
+    Residual form — S is never attenuated (unlike Stream3D's convex gate*S + (1-gate)*G).
+    S and G arrive already token-count-aligned (same per-frame grid, tiled by `repeat(k)`).
+    """
+
+    def __init__(self, hidden_size: int) -> None:
+        super().__init__()
+        self.gate = nn.Linear(hidden_size * 2, hidden_size)
+        self.alpha = nn.Parameter(torch.zeros(1))
+
+    def forward(self, S: torch.Tensor, G: torch.Tensor) -> torch.Tensor:
+        gate = torch.sigmoid(self.gate(torch.cat([S, G], dim=-1)))
+        return S + torch.tanh(self.alpha) * gate * G
+
+
 class VGGTMerger(nn.Module):
     def __init__(self, output_dim: int, hidden_dim: int, context_dim: int, spatial_merge_size: int = 2) -> None:
         super().__init__()
@@ -1727,6 +1750,12 @@ class Qwen2_5_VLForConditionalGenerationForJanusVLN(Qwen2_5_VLPreTrainedModel, G
         )
         self.config.reference_frame = getattr(config, "reference_frame", "first")
         self.lam = getattr(config, "lam", 0.2)
+        # Lever 3 (fusion): "flat_add" = JanusVLN's S + lam*G; "gated" = baseline-preserving
+        # VSFI-style gated residual. The gate is a new trainable module (left unfrozen by
+        # set_model, which only touches visual/llm/vggt/merger).
+        self.fusion_method = getattr(config, "fusion_method", "flat_add")
+        if self.fusion_method == "gated":
+            self.geo_fusion = GatedGeometryFusion(config.hidden_size)
 
         self.kv_cache_vggt = StartRecentKVCache(
                 start_size=8,          
@@ -2161,7 +2190,10 @@ class Qwen2_5_VLForConditionalGenerationForJanusVLN(Qwen2_5_VLPreTrainedModel, G
                 image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw)
                 k = image_embeds.shape[0] // image_embeds_3d.shape[0]
                 image_embeds_3d = image_embeds_3d.repeat(k, 1)
-                image_embeds = image_embeds + self.lam * image_embeds_3d
+                if self.fusion_method == "gated":
+                    image_embeds = self.geo_fusion(image_embeds, image_embeds_3d)
+                else:
+                    image_embeds = image_embeds + self.lam * image_embeds_3d
                 n_image_tokens = (input_ids == self.config.image_token_id).sum().item()
                 n_image_features = image_embeds.shape[0]
                 if n_image_tokens != n_image_features:

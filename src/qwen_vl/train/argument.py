@@ -17,6 +17,8 @@ class ModelArguments:
     # Lever 2 (geometry memory): "full" (no eviction) or "importance" (Tier A, bounded budget).
     geometry_memory_policy: str = field(default="full")
     geometry_kv_budget: int = field(default=200000)
+    # Lever 3 (fusion): "flat_add" (JanusVLN S+lam*G) or "gated" (VSFI-style zero-init gate).
+    fusion_method: str = field(default="flat_add")
     lam: float = field(default=0.2)
     distill_loss_weight: float = field(default=1.0)
     reference_frame: str = field(default="last")
