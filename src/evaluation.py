@@ -349,6 +349,18 @@ class VLNEvaluator:
 class JanusVLN_Inference:
     def __init__(self, pretrained, device="cuda"):
         config = AutoConfig.from_pretrained(pretrained)
+        # Eval-time ablation override: swap the geometry memory policy (full/sink ->
+        # importance) WITHOUT retraining. Importance eviction is non-parametric, so it
+        # runs on a full-trained checkpoint (a deliberate train/eval mismatch for ablation).
+        import os as _os
+        _mem_policy = _os.environ.get("GEOMETRY_MEMORY_POLICY")
+        if _mem_policy:
+            config.geometry_memory_policy = _mem_policy
+            print(f"[eval override] geometry_memory_policy -> {_mem_policy}")
+        _kv_budget = _os.environ.get("GEOMETRY_KV_BUDGET")
+        if _kv_budget:
+            config.geometry_kv_budget = int(_kv_budget)
+            print(f"[eval override] geometry_kv_budget -> {_kv_budget}")
         self.model = Qwen2_5_VLForConditionalGenerationForJanusVLN.from_pretrained(
             pretrained,
             config=config,

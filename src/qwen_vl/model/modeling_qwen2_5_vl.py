@@ -1662,35 +1662,61 @@ class StartRecentKVCache:
         recent_size=48,
         k_seq_dim=2,
         v_seq_dim=2,
+        frame_aware=False,
     ):
-        print(f"StartRecentKVCache: {start_size}, {recent_size}")
-        self.start_size = start_size
-        self.recent_size = recent_size
-        self.cache_size = start_size + recent_size
+        import os
+        # Env overrides so the sink window can be ablated without code edits.
+        self.start_size = int(os.environ.get("VGGT_KV_START", start_size))
+        self.recent_size = int(os.environ.get("VGGT_KV_RECENT", recent_size))
+        # frame_aware: interpret start/recent as FRAME counts (scaled by tokens-per-frame).
+        # StreamVGGT's aggregator KV is token-level; a raw token window of start+recent
+        # keeps <1 frame and wipes geometry memory. Frame-aware keeps whole frames.
+        self.frame_aware = frame_aware
+        self.tokens_per_frame = None
         self.k_seq_dim = k_seq_dim
         self.v_seq_dim = v_seq_dim
         self.k_slice = DIM_TO_SLICE[k_seq_dim]
         self.v_slice = DIM_TO_SLICE[v_seq_dim]
+        print(f"StartRecentKVCache: start={self.start_size}, recent={self.recent_size}, frame_aware={self.frame_aware}")
+
+    def _first_kv(self, past_key_values):
+        for e in past_key_values:
+            if e is not None:
+                return e
+        return None
 
     def __call__(self, past_key_values):
         if past_key_values is None:
             return None
-        seq_len = past_key_values[0][0].size(self.k_seq_dim)
-        if seq_len <= self.cache_size:
+        first = self._first_kv(past_key_values)
+        if first is None:
+            return past_key_values
+        seq_len = first[0].size(self.k_seq_dim)
+        if self.frame_aware:
+            if self.tokens_per_frame is None:
+                # The first eviction call of an episode holds exactly one frame.
+                self.tokens_per_frame = seq_len
+            tpf = max(1, self.tokens_per_frame)
+            start_keep = self.start_size * tpf
+            recent_keep = self.recent_size * tpf
+        else:
+            start_keep = self.start_size
+            recent_keep = self.recent_size
+        if seq_len <= start_keep + recent_keep:
             return past_key_values
         return [
             [
                 torch.cat(
                     [
-                        self.k_slice(k, 0, self.start_size),
-                        self.k_slice(k, seq_len - self.recent_size, seq_len),
+                        self.k_slice(k, 0, start_keep),
+                        self.k_slice(k, seq_len - recent_keep, seq_len),
                     ],
                     dim=self.k_seq_dim,
                 ),
                 torch.cat(
                     [
-                        self.v_slice(v, 0, self.start_size),
-                        self.v_slice(v, seq_len - self.recent_size, seq_len),
+                        self.v_slice(v, 0, start_keep),
+                        self.v_slice(v, seq_len - recent_keep, seq_len),
                     ],
                     dim=self.v_seq_dim,
                 ),
@@ -1758,10 +1784,13 @@ class Qwen2_5_VLForConditionalGenerationForJanusVLN(Qwen2_5_VLPreTrainedModel, G
             self.geo_fusion = GatedGeometryFusion(config.hidden_size)
 
         self.kv_cache_vggt = StartRecentKVCache(
-                start_size=8,          
-                recent_size=48,     
-                k_seq_dim=2,          
-                v_seq_dim=2            
+                start_size=8,
+                recent_size=48,
+                k_seq_dim=2,
+                v_seq_dim=2,
+                # StreamVGGT KV is token-level -> keep 8+48 FRAMES, not tokens.
+                # VGGT baseline keeps original token-level behavior.
+                frame_aware=self.geometry_encoder_type in ("ghost", "streamvggt"),
             )
         
         if getattr(config, "add_ground_classifier", False):
@@ -2166,6 +2195,18 @@ class Qwen2_5_VLForConditionalGenerationForJanusVLN(Qwen2_5_VLPreTrainedModel, G
                                         # train and eval; skip the eval-only sink+window to avoid
                                         # double-evicting.
                                         self.past_key_values_vggt = self.kv_cache_vggt(self.past_key_values_vggt)
+
+                                    import os as _os
+                                    if _os.environ.get("VGGT_KV_DEBUG"):
+                                        _kvlen = None
+                                        if self.past_key_values_vggt is not None:
+                                            for _e in self.past_key_values_vggt:
+                                                if _e is not None:
+                                                    _kvlen = _e[0].shape[2]
+                                                    break
+                                        print(f"[VGGT_KV_DEBUG] mode={self.mode!r} geom={self.geometry_encoder_type!r} "
+                                              f"policy={self.geometry_memory_policy!r} frame_k={k} "
+                                              f"n_frames_in={images_vggt[i].shape[0]} kv_seq_len={_kvlen}", flush=True)
 
                                     features = aggregated_tokens[-2][0,:, patch_start_idx:]
 
